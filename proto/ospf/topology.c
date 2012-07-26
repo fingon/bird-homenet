@@ -2019,7 +2019,7 @@ unsigned int
 ospf_lsa_ac_is_reachable(struct proto_ospf *po, struct top_hash_entry *en)
 {
   struct top_hash_entry *rt = ospf_hash_find_rt(po->gr, en->domain, en->lsa.rt);
-  return rt->color == INSPF;
+  return rt && rt->color == INSPF;
 }
 
 #endif
