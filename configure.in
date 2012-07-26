@@ -9,6 +9,7 @@ AC_CONFIG_AUX_DIR(tools)
 AC_ARG_ENABLE(debug,	[  --enable-debug          enable internal debugging routines (default: disabled)],,enable_debug=no)
 AC_ARG_ENABLE(sysevent,	[  --enable-sysevent       enable Linksys-specific sysevent calls (default: disabled)],,enable_sysevent=no)
 AC_ARG_ENABLE(memcheck,	[  --enable-memcheck       check memory allocations when debugging (default: enabled)],,enable_memcheck=yes)
+AC_ARG_ENABLE(static,	[  --enable-static         create static binaries  (default: disabled)],,enable_memcheck=no)
 AC_ARG_ENABLE(client,	[  --enable-client         enable building of BIRD client (default: enabled)],,enable_client=yes)
 AC_ARG_ENABLE(ipv6,	[  --enable-ipv6           enable building of IPv6 version (default: disabled)],,enable_ipv6=no)
 AC_ARG_WITH(suffix,	[  --with-suffix=STRING    use specified suffix for BIRD files (default: 6 for IPv6 version)],[given_suffix="yes"])
@@ -160,6 +161,10 @@ else
 				;;
 		esac
 	sysdesc=$srcdir/sysdep/cf/$sysdesc.h
+fi
+
+if test "$enable_static" = yes ; then
+   LDFLAGS="$LDFLAGS --static"
 fi
 AC_MSG_CHECKING([which OS configuration should we use])
 AC_MSG_RESULT($sysdesc)
