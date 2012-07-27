@@ -111,6 +111,8 @@ struct prefix_node
   struct prefix px;
   u32 rid;                      /* Who is responsible for this prefix.
                                    Only relevant for assigned prefixes. */
+  u32 my_rid;                   /* My router ID used when configuring
+                                   address. (Relevant as it may change.)*/
   int valid;                    /* Used in prefix assignment algorithm.
                                    Only relevant for assigned prefixes. */
 #define OSPF_USP_T_MANUAL 1
