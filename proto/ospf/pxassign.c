@@ -43,6 +43,7 @@ static void try_split(struct ospf_iface *ifa, ip_addr usp_addr, unsigned int usp
 static int
 configure_ifa_add_prefix(ip_addr addr, unsigned int len,
                          u32 rid,
+                         u32 my_rid,
                          int pa_priority,
                          struct ospf_iface *ifa)
 {
@@ -55,6 +56,7 @@ configure_ifa_add_prefix(ip_addr addr, unsigned int len,
   pxn->px.addr = addr;
   pxn->px.len = len;
   pxn->rid = rid;
+  pxn->my_rid = my_rid;
   pxn->pa_priority = pa_priority;
   pxn->valid = 1;
   add_tail(&ifa->asp_list, NODE pxn);
@@ -65,7 +67,11 @@ configure_ifa_add_prefix(ip_addr addr, unsigned int len,
   // Maybe the interfaces' asp_list should be placed elsewhere than in the ospf_iface struct.
   // FIXME #3 This should probably be in a sysdep file.
   ip_ntop(addr, ip6addr);
-  snprintf(cmd, sizeof(cmd), "ip -6 addr add %s/%d dev %s", ip6addr, len, ifa->iface->name);
+  snprintf(cmd, sizeof(cmd), "ip -6 addr add %s%x:%x/%d dev %s",
+           ip6addr,
+           my_rid >> 16,
+           my_rid & 0xFFFF,
+           len, ifa->iface->name);
   return system(cmd);
 }
 
@@ -82,7 +88,11 @@ configure_ifa_del_prefix(struct prefix_node *pxn, struct ospf_iface *ifa)
   // Maybe the interfaces' asp_list should be placed elsewhere than in the ospf_iface struct.
   // FIXME #3 This should probably be in a sysdep file.
   ip_ntop(pxn->px.addr, ip6addr);
-  snprintf(cmd, sizeof(cmd), "ip -6 addr del %s/%d dev %s", ip6addr, pxn->px.len, ifa->iface->name);
+  snprintf(cmd, sizeof(cmd), "ip -6 addr del %s%x:%x/%d dev %s",
+           ip6addr,
+           pxn->my_rid >> 16,
+           pxn->my_rid & 0xFFFF,
+           pxn->px.len, ifa->iface->name);
   rv = system(cmd);
 
   /* And from the internal datastructure */
@@ -796,7 +806,7 @@ ospf_pxassign_usp_ifa(struct ospf_iface *ifa, struct ospf_lsa_ac_tlv_v_usp *cusp
     if(!found && !refused)
     {
       OSPF_TRACE(D_EVENTS, "Interface %s: Adding %R's assignment %I/%d with priority %d", ifa->iface->name, neigh_rid, neigh_r_addr, neigh_r_len, highest_link_pa_priority);
-      configure_ifa_add_prefix(neigh_r_addr, neigh_r_len, neigh_rid, highest_link_pa_priority, ifa);
+      configure_ifa_add_prefix(neigh_r_addr, neigh_r_len, neigh_rid, po->router_id, highest_link_pa_priority, ifa);
     }
   }
 
@@ -1022,7 +1032,7 @@ try_assign_unused(struct ospf_iface *ifa, ip_addr usp_addr, unsigned int usp_len
       }
       *change = 1;
       *pxchoose_success = 1;
-      configure_ifa_add_prefix(px_tmp.addr, px_tmp.len, po->router_id, ifa->pa_priority, ifa);
+      configure_ifa_add_prefix(px_tmp.addr, px_tmp.len, po->router_id, po->router_id, ifa->pa_priority, ifa);
       break;
 
     case PXCHOOSE_FAILURE:
@@ -1137,7 +1147,7 @@ try_steal(struct ospf_iface *ifa, ip_addr usp_addr, unsigned int usp_len, ip_add
     }
     *change = 1;
     *pxchoose_success = 1;
-    configure_ifa_add_prefix(*steal_addr, *steal_len, po->router_id, ifa->pa_priority, ifa);
+    configure_ifa_add_prefix(*steal_addr, *steal_len, po->router_id, po->router_id, ifa->pa_priority, ifa);
   }
 }
 
@@ -1246,7 +1256,7 @@ try_split(struct ospf_iface *ifa, ip_addr usp_addr, unsigned int usp_len, ip_add
         OSPF_TRACE(D_EVENTS, "Interface %s: split prefix %I/%d to assign from usable prefix %I/%d", ifa->iface->name, px_tmp.addr, px_tmp.len, usp_addr, usp_len);
         *change = 1;
         *pxchoose_success = 1;
-        configure_ifa_add_prefix(pxu_tmp.addr, pxu_tmp.len, po->router_id, ifa->pa_priority, ifa);
+        configure_ifa_add_prefix(pxu_tmp.addr, pxu_tmp.len, po->router_id, po->router_id, ifa->pa_priority, ifa);
         break;
       case PXCHOOSE_FAILURE: //impossible
         die("bug in prefix assignment algorithm");
