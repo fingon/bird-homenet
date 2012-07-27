@@ -242,7 +242,7 @@ CF_GRAMMAR
 
 CF_ADDTO(proto, ospf_proto '}' { ospf_proto_finish(); } )
 
-ospf_proto_start: proto_start OSPF { ospf_proto_start($1) }
+ospf_proto_start: proto_start OSPF { ospf_proto_start($1); }
  ;
 
 ospf_proto:
@@ -630,7 +630,7 @@ lsadb_args:
      $$ = cfg_allocz(sizeof(struct lsadb_show_data));
    }
  | lsadb_args GLOBAL { $$ = $1; $$->scope = LSA_SCOPE_AS; }
- | lsadb_args AREA idval { $$ = $1; $$->scope = LSA_SCOPE_AREA; $$->area = $3 }
+ | lsadb_args AREA idval { $$ = $1; $$->scope = LSA_SCOPE_AREA; $$->area = $3; }
  | lsadb_args LINK { $$ = $1; $$->scope = 1; /* hack, 0 is no filter */ }
  | lsadb_args TYPE NUM { $$ = $1; $$->type = $3; }
  | lsadb_args LSID idval { $$ = $1; $$->lsid = $3; }
