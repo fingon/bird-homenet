@@ -16,6 +16,7 @@
  */
 
 #include "ospf.h"
+#include "lib/md5.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include "sysdep/unix/linksys.h"
@@ -23,10 +24,8 @@
 #ifdef OSPFv3
 
 static struct prefix_node* assignment_find(struct ospf_iface *ifa, struct prefix *usp);
-static void random_prefix(struct prefix *px, struct prefix *pxsub);
 static int in_use(struct prefix *px, list used);
 static void next_prefix(struct prefix *pxa, struct prefix *pxb);
-static int choose_prefix(struct prefix *pxu, struct prefix *px, list used);
 static void find_used(struct ospf_iface *ifa, ip_addr usp_addr, unsigned int usp_len, list *used, ip_addr *steal_addr, unsigned int *steal_len,
                       unsigned int *found_steal, ip_addr *split_addr, unsigned int *split_len, unsigned int *found_split, u8 *lowest_pa_priority,
                       struct prefix_node *self_r_px);
@@ -180,25 +179,27 @@ assignment_find(struct ospf_iface *ifa, struct prefix *usp)
 }
 
 /**
- * random_prefix - Select a random sub-prefix of specified length
+ * random_prefix - Select a pseudorandom sub-prefix of specified length
  * @px: A pointer to the prefix
  * @pxsub: A pointer to the sub-prefix. Length field must be set.
+ * @i: Number of the iteration-
  */
 static void
-random_prefix(struct prefix *px, struct prefix *pxsub)
+random_prefix(struct prefix *px, struct prefix *pxsub, u32 rid, struct ospf_iface *ifa, int i)
 {
-  if (px->len < 32 && pxsub->len > 0)
-    _I0(pxsub->addr) = random_u32();
-  if (px->len < 64 && pxsub->len > 32)
-    _I1(pxsub->addr) = random_u32();
-  if (px->len < 96 && pxsub->len > 64)
-    _I2(pxsub->addr) = random_u32();
-  if (px->len < 128 && pxsub->len > 96)
-    _I3(pxsub->addr) = random_u32();
+  struct MD5Context ctxt;
+  char md5sum[16];
+
+  MD5Init(&ctxt);
+  MD5Update(&ctxt, ifa->iface->name, strlen(ifa->iface->name));
+  MD5Update(&ctxt, (char *)&rid, sizeof(rid));
+  MD5Update(&ctxt, (char *)&i, sizeof(i));
+  MD5Final(md5sum, &ctxt);
+
+  memcpy(&pxsub->addr, md5sum, 16);
 
   // clean up right part of prefix
-  if (pxsub->len < 128)
-    pxsub->addr.addr[pxsub->len / 32] &= u32_mkmask(pxsub->len % 32);
+  pxsub->addr = ipa_and(pxsub->addr, ipa_mkmask(pxsub->len));
 
   // clean up left part of prefix
   pxsub->addr = ipa_and(pxsub->addr, ipa_not(ipa_mkmask(px->len)));
@@ -310,7 +311,7 @@ next_prefix(struct prefix *pxa, struct prefix *pxb)
  * all prefixes are in use.
  */
 static int
-choose_prefix(struct prefix *pxu, struct prefix *px, list used)
+choose_prefix(struct prefix *pxu, struct prefix *px, list used, u32 rid, struct ospf_iface *ifa)
 {
   /* (Stupid) Algorithm:
      - try a random prefix until success or 10 attempts have passed
@@ -330,7 +331,7 @@ choose_prefix(struct prefix *pxu, struct prefix *px, list used)
 
   int i;
   for(i=0;i<10;i++){
-    random_prefix(pxu, px);
+    random_prefix(pxu, px, rid, ifa, i);
     if(!in_use(px, used))
       return PXCHOOSE_SUCCESS;
   }
@@ -386,7 +387,7 @@ ospf_pxassign(struct proto_ospf *po)
 void
 ospf_pxassign_area(struct ospf_area *oa)
 {
-  //struct proto *p = &oa->po->proto;
+  struct proto *p = &oa->po->proto;
   struct proto_ospf *po = oa->po;
   struct top_hash_entry *en;
   struct ospf_iface *ifa;
@@ -432,6 +433,7 @@ ospf_pxassign_area(struct ospf_area *oa)
         {
           if(asp->rid == po->router_id)
             change = 1;
+          OSPF_TRACE(D_EVENTS, "Interface %s: assignment %I/%d removed as invalid", ifa->iface->name, asp->px.addr, asp->px.len);
           configure_ifa_del_prefix(asp, ifa);
         }
       }
@@ -463,7 +465,7 @@ ospf_pxassign_usp_ifa(struct ospf_iface *ifa, struct ospf_lsa_ac_tlv_v_usp *cusp
   struct ospf_lsa_ac_tlv_v_asp *asp;
   struct ospf_lsa_ac_tlv_v_iasp *iasp;
   struct ospf_neighbor *neigh;
-  struct prefix_node *pxn, *n, *self_r_px;
+  struct prefix_node *pxn, *n, *self_r_px = NULL;
   //timer *pxassign_timer;
   ip_addr usp_addr, usp2_addr, neigh_addr, neigh_r_addr;
   unsigned int usp_len, usp2_len, neigh_len, neigh_r_len;
@@ -1018,7 +1020,7 @@ try_assign_unused(struct ospf_iface *ifa, ip_addr usp_addr, unsigned int usp_len
   px_tmp.len = length;
   pxu_tmp.addr = usp_addr;
   pxu_tmp.len = usp_len;
-  switch(choose_prefix(&pxu_tmp, &px_tmp, *used))
+  switch(choose_prefix(&pxu_tmp, &px_tmp, *used, po->router_id, ifa))
   {
     case PXCHOOSE_SUCCESS:
       if(self_r_px)
@@ -1250,7 +1252,7 @@ try_split(struct ospf_iface *ifa, ip_addr usp_addr, unsigned int usp_len, ip_add
     pxu_tmp.len = *split_len;
     list empty_list;
     init_list(&empty_list);
-    switch(choose_prefix(&pxu_tmp, &px_tmp, empty_list))
+    switch(choose_prefix(&pxu_tmp, &px_tmp, empty_list, po->router_id, ifa))
     {
       case PXCHOOSE_SUCCESS:
         OSPF_TRACE(D_EVENTS, "Interface %s: split prefix %I/%d to assign from usable prefix %I/%d", ifa->iface->name, px_tmp.addr, px_tmp.len, usp_addr, usp_len);
