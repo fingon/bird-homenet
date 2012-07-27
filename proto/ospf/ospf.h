@@ -109,6 +109,8 @@ struct prefix_node
 {
   node n;
   struct prefix px;
+  /* FIXME: This should be a #define and not value copied from nest/iface.h */
+  char ifname[16];              /* Stored for future use. */
   u32 rid;                      /* Who is responsible for this prefix.
                                    Only relevant for assigned prefixes. */
   u32 my_rid;                   /* My router ID used when configuring
@@ -122,6 +124,14 @@ struct prefix_node
   u8 pa_priority;               /* The prefix assignment priority of
                                    the router responsible for this prefix.
                                    Only relevant for assigned prefixes. */
+};
+
+struct ospf_iface_prefixes
+{
+  node n;
+  struct iface *iface;
+  int valid;
+  list asp_list;
 };
 
 struct nbma_node
@@ -267,14 +277,6 @@ struct ospf_iface
   list asp_list;                /* list of struct prefix_node.
                                    List of prefixes that have been assigned to this interface
                                    by us from a usable prefix */
-  /*list asp_list_noresp;*/         /* list of struct prefix_node.
-                                   List of prefixes that have been assigned to this interface by another router
-                                   on the link. */
-  list usp_list;                /* list of struct ospf_usp.
-                                   Each node corresponds to one Usable Prefix learned via OSPF,
-                                   a pointer to the current interface and a timer for prefix assignment.
-                                   See RFC TBD /
-                                   http://tools.ietf.org/html/draft-arkko-homenet-prefix-assignment-01 section 5.3.2 */
 #endif
 
   u8 type;			/* OSPF view of type */
@@ -954,8 +956,7 @@ struct proto_ospf
   byte pxassign;                /* Prefix assignment scheduled? */
   list usp_list;                /* list of struct prefix_node.
                                    Usable Prefixes to be placed in our own AC LSAs */
-  /*list asp_list;*/                /* List of prefixes that have been
-                                   assigned to an interface in the OSPF network */
+  list ip_list;                 /* Assigned prefix state of pendants that are down. */
   void *pxassign_file;          /* File to keep track of assigned prefixes */
 #endif
   byte ebit;			/* Did I originate any ext lsa? */

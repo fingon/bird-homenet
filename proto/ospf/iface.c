@@ -577,11 +577,6 @@ ospf_iface_new(struct ospf_area *oa, struct ifa *addr, struct ospf_iface_patt *i
 
   init_list(&ifa->neigh_list);
   init_list(&ifa->nbma_list);
-#ifdef OSPFv3
-  init_list(&ifa->usp_list);
-  init_list(&ifa->asp_list);
-  //init_list(&ifa->asp_list_noresp);
-#endif
 
   WALK_LIST(nb, ip->nbma_list)
     if (ipa_in_net(nb->ip, addr->prefix, addr->pxlen))
@@ -589,6 +584,10 @@ ospf_iface_new(struct ospf_area *oa, struct ifa *addr, struct ospf_iface_patt *i
 
   ifa->state = OSPF_IS_DOWN;
   add_tail(&oa->po->iface_list, NODE ifa);
+
+#ifdef OSPFv3
+  ospf_pxassign_new_iface(ifa);
+#endif
 
   if (ifa->type == OSPF_IT_VLINK)
   {

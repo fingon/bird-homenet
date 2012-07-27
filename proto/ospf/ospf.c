@@ -254,6 +254,7 @@ ospf_start(struct proto *p)
   {
     ospf_usp_add(po,n);
   }
+  init_list(&(po->ip_list));
   //init_list(&(po->asp_list));
 #endif
   po->ebit = 0;

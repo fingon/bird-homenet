@@ -49,9 +49,12 @@ configure_ifa_add_prefix(ip_addr addr, unsigned int len,
   struct prefix_node *pxn;
   char cmd[128];
   char ip6addr[40];
+  struct ospf_area *oa = ifa->oa;
+  struct proto_ospf *po = oa->po;
+  struct proto *p = &po->proto;
 
   /* Add the prefix to the interface */
-  pxn = mb_alloc(ifa->pool, sizeof(struct prefix_node));
+  pxn = mb_alloc(p->pool, sizeof(struct prefix_node));
   pxn->px.addr = addr;
   pxn->px.len = len;
   pxn->rid = rid;
@@ -59,6 +62,7 @@ configure_ifa_add_prefix(ip_addr addr, unsigned int len,
   pxn->pa_priority = pa_priority;
   pxn->valid = 1;
   add_tail(&ifa->asp_list, NODE pxn);
+  strncpy(pxn->ifname, ifa->iface->name, 16);
 
   /* And then configure it to the system */
   // FIXME need a better way to do this.
@@ -70,12 +74,12 @@ configure_ifa_add_prefix(ip_addr addr, unsigned int len,
            ip6addr,
            my_rid >> 16,
            my_rid & 0xFFFF,
-           len, ifa->iface->name);
+           len, pxn->ifname);
   return system(cmd);
 }
 
 static int
-configure_ifa_del_prefix(struct prefix_node *pxn, struct ospf_iface *ifa)
+configure_ifa_del_prefix(struct prefix_node *pxn)
 {
   char cmd[128];
   char ip6addr[40];
@@ -91,7 +95,7 @@ configure_ifa_del_prefix(struct prefix_node *pxn, struct ospf_iface *ifa)
            ip6addr,
            pxn->my_rid >> 16,
            pxn->my_rid & 0xFFFF,
-           pxn->px.len, ifa->iface->name);
+           pxn->px.len, pxn->ifname);
   rv = system(cmd);
 
   /* And from the internal datastructure */
@@ -391,8 +395,9 @@ ospf_pxassign_area(struct ospf_area *oa)
   struct proto_ospf *po = oa->po;
   struct top_hash_entry *en;
   struct ospf_iface *ifa;
-  struct prefix_node *asp;
+  struct prefix_node *asp, *aspn;
   struct ospf_lsa_ac_tlv_v_usp *usp;
+  struct ospf_iface_prefixes *ip, *ipn;
   int change = 0;
 
   //OSPF_TRACE(D_EVENTS, "Starting prefix assignment algorithm for AC LSAs in area %R", oa->areaid);
@@ -404,7 +409,8 @@ ospf_pxassign_area(struct ospf_area *oa)
     {
       WALK_LIST(asp, ifa->asp_list)
       {
-        asp->valid = 0;
+        if (asp->valid)
+          asp->valid--;
       }
     }
   }
@@ -430,15 +436,29 @@ ospf_pxassign_area(struct ospf_area *oa)
       WALK_LIST(asp, ifa->asp_list)
       {
         if(!asp->valid)
-        {
-          if(asp->rid == po->router_id)
-            change = 1;
-          OSPF_TRACE(D_EVENTS, "Interface %s: assignment %I/%d removed as invalid", ifa->iface->name, asp->px.addr, asp->px.len);
-          configure_ifa_del_prefix(asp, ifa);
-        }
+          {
+            if(asp->rid == po->router_id)
+              change = 1;
+            OSPF_TRACE(D_EVENTS, "Interface %s: assignment %I/%d removed as invalid", ifa->iface->name, asp->px.addr, asp->px.len);
+            configure_ifa_del_prefix(asp);
+          }
       }
     }
   }
+
+  WALK_LIST_DELSAFE(ip, ipn, po->ip_list)
+    {
+      if (--(ip->valid) == 0)
+        {
+          WALK_LIST_DELSAFE(asp, aspn, ip->asp_list)
+            {
+              OSPF_TRACE(D_EVENTS, "Interface %s: assignment %I/%d removed (flip-flop, never reappeared)", asp->ifname, asp->px.addr, asp->px.len);
+              configure_ifa_del_prefix(asp);
+            }
+          rem_node(NODE ip);
+          mb_free(ip);
+        }
+    }
 
   if(change)
   {
@@ -622,7 +642,7 @@ ospf_pxassign_usp_ifa(struct ospf_iface *ifa, struct ospf_lsa_ac_tlv_v_usp *cusp
                                                           || net_in_net(self_r_px->px.addr, self_r_px->px.len, addr, len))))
           {
             OSPF_TRACE(D_EVENTS, "Interface %s: assignment %I/%d collides with %I/%d, removing", ifa->iface->name, self_r_px->px.addr, self_r_px->px.len, addr, len);
-            configure_ifa_del_prefix(self_r_px, ifa);
+            configure_ifa_del_prefix(self_r_px);
             deassigned_prefix = 1;
             change = 1;
             break;
@@ -798,7 +818,7 @@ ospf_pxassign_usp_ifa(struct ospf_iface *ifa, struct ospf_lsa_ac_tlv_v_usp *cusp
                                    ifa->iface->name, neigh_rid, neigh_r_addr, neigh_r_len, highest_link_pa_priority, ifa2->iface->name, n->px.addr, n->px.len, n->pa_priority);
               if(n->rid == po->router_id)
                 change = 1;
-              configure_ifa_del_prefix(n, ifa2);
+              configure_ifa_del_prefix(n);
             }
           }
         }
@@ -893,6 +913,7 @@ find_used(struct ospf_iface *ifa, ip_addr usp_addr, unsigned int usp_len, list *
 {
   struct ospf_area *oa = ifa->oa;
   struct proto_ospf *po = oa->po;
+  struct proto *p = &po->proto;
   struct top_hash_entry *en;
   struct prefix_node *n, *pxn;
   struct ospf_lsa_ac_tlv_v_iasp *iasp;
@@ -917,7 +938,7 @@ find_used(struct ospf_iface *ifa, ip_addr usp_addr, unsigned int usp_len, list *
         if(net_in_net(addr, len, usp_addr, usp_len))
         {
           /* add prefix to list of used prefixes */
-          pxn = mb_alloc(ifa->pool, sizeof(struct prefix_node));
+          pxn = mb_alloc(p->pool, sizeof(struct prefix_node));
           add_tail(used, NODE pxn);
           pxn->px.addr = addr;
           pxn->px.len = len;
@@ -962,7 +983,7 @@ find_used(struct ospf_iface *ifa, ip_addr usp_addr, unsigned int usp_len, list *
              || ifa != ifa2)
           {
             /* add prefix to list of used prefixes */
-            pxn = mb_alloc(ifa->pool, sizeof(struct prefix_node));
+            pxn = mb_alloc(p->pool, sizeof(struct prefix_node));
             add_tail(used, NODE pxn);
             pxn->px.addr = n->px.addr;
             pxn->px.len = n->px.len;
@@ -1027,7 +1048,7 @@ try_assign_unused(struct ospf_iface *ifa, ip_addr usp_addr, unsigned int usp_len
       {
         // delete the old /80 that is going to be replaced
         OSPF_TRACE(D_EVENTS, "Interface %s: Replacing prefix %I/%d with prefix %I/%d from usable prefix %I/%d", ifa->iface->name, self_r_px->px.addr, self_r_px->px.len, px_tmp.addr, px_tmp.len, usp_addr, usp_len);
-        configure_ifa_del_prefix(self_r_px, ifa);
+        configure_ifa_del_prefix(self_r_px);
       }
       else {
         OSPF_TRACE(D_EVENTS, "Interface %s: Chose prefix %I/%d to assign from usable prefix %I/%d", ifa->iface->name, px_tmp.addr, px_tmp.len, usp_addr, usp_len);
@@ -1132,7 +1153,7 @@ try_steal(struct ospf_iface *ifa, ip_addr usp_addr, unsigned int usp_len, ip_add
             OSPF_TRACE(D_EVENTS, "Interface %s: stealing assignment %I/%d, must remove %I/%d from interface %s", ifa->iface->name, *steal_addr, *steal_len, n->px.addr, n->px.len, ifa2->iface->name);
             if(n->rid == po->router_id)
               *change = 1;
-            configure_ifa_del_prefix(n, ifa2);
+            configure_ifa_del_prefix(n);
           }
         }
       }
@@ -1142,7 +1163,7 @@ try_steal(struct ospf_iface *ifa, ip_addr usp_addr, unsigned int usp_len, ip_add
     if(self_r_px)
     {
       OSPF_TRACE(D_EVENTS, "Interface %s: Replacing prefix %I/%d with stolen prefix %I/%d from usable prefix %I/%d", ifa->iface->name, self_r_px->px.addr, self_r_px->px.len, *steal_addr, *steal_len, usp_addr, usp_len);
-      configure_ifa_del_prefix(self_r_px, ifa);
+      configure_ifa_del_prefix(self_r_px);
     }
     else {
       OSPF_TRACE(D_EVENTS, "Interface %s: stole prefix %I/%d to assign from usable prefix %I/%d", ifa->iface->name, *steal_addr, *steal_len, usp_addr, usp_len);
@@ -1238,7 +1259,7 @@ try_split(struct ospf_iface *ifa, ip_addr usp_addr, unsigned int usp_len, ip_add
             OSPF_TRACE(D_EVENTS, "Interface %s: splitting assignment %I/%d, must remove %I/%d from interface %s", ifa->iface->name, *split_addr, *split_len, n->px.addr, n->px.len, ifa2->iface->name);
             if(n->rid == po->router_id)
               *change = 1;
-            configure_ifa_del_prefix(n, ifa2);
+            configure_ifa_del_prefix(n);
           }
         }
       }
@@ -1350,20 +1371,81 @@ ospf_pxassign_reconfigure_iface(struct ospf_iface *ifa)
 void
 ospf_pxassign_remove_iface(struct ospf_iface *ifa)
 {
-#if 0
-  struct prefix_node *n;
+  struct prefix_node *asp, *aspn;
   struct ospf_area *oa = ifa->oa;
   struct proto_ospf *po = oa->po;
   struct proto *p = &po->proto;
+  struct ospf_iface_prefixes *ip;
 
-  /* This is probably correct thing to do. However, it does not work
-     too well in practise, as the link flaps AND interface address
-     add-removes cause whole ospf_iface's to be removed+readded. */
-  WALK_LIST_FIRST(n, ifa->asp_list)
-  {
-    OSPF_TRACE(D_EVENTS, "Interface %s: removing prefix %I/%d", ifa->iface->name, n->px.addr, n->px.len);
-    configure_ifa_del_prefix(n, ifa);
-  }
-#endif /* 0 */
+  if (EMPTY_LIST(ifa->asp_list))
+    return;
+  if (!ifa->iface)
+    {
+      WALK_LIST_FIRST(asp, ifa->asp_list)
+        {
+          OSPF_TRACE(D_EVENTS, "Interface %s: removing prefix %I/%d", ifa->iface->name, asp->px.addr, asp->px.len);
+          configure_ifa_del_prefix(asp);
+
+        }
+      return;
+    }
+
+  /* Store the entries for reuse. */
+  ip = mb_allocz(p->pool, sizeof(struct ospf_iface_prefixes));
+  ip->iface = ifa->iface;
+  init_list(&ip->asp_list);
+  WALK_LIST_DELSAFE(asp, aspn, ifa->asp_list)
+    {
+      rem_node(NODE asp);
+      add_tail(&ip->asp_list, NODE asp);
+    }
+
+  ip->valid = 10;
+  add_tail(&po->ip_list, NODE ip);
+  OSPF_TRACE(D_EVENTS, "Storing prefix list for interface %s[0x%x]",
+             ifa->iface->name,
+             (int)ifa->iface);
 }
+
+void
+ospf_pxassign_new_iface(struct ospf_iface *ifa)
+{
+  struct ospf_area *oa = ifa->oa;
+  struct proto_ospf *po = oa->po;
+  struct proto *p = &po->proto;
+  struct ospf_iface_prefixes *ip;
+  struct prefix_node *asp, *aspn;
+
+  /* First off, try to find the stored interface to reuse. */
+  init_list(&ifa->asp_list);
+  WALK_LIST(ip, po->ip_list)
+    {
+      if (ip->iface == ifa->iface)
+        {
+          OSPF_TRACE(D_EVENTS, "Reusing old usp/asp list for interface %s[0x%x]",
+                     ifa->iface->name,
+                     (int)ifa->iface);
+          /* Copy nodes from ip->list to ifa->asp_list */
+          WALK_LIST_DELSAFE(asp, aspn, ip->asp_list)
+            {
+              rem_node(NODE asp);
+              add_tail(&ifa->asp_list, NODE asp);
+              asp->valid = 10;
+              /* FIXME: Won't be culled in the next two runs of prefix
+               * assignment algorithm. Rather arbitrary logic, I'm
+               * afraid. */
+            }
+          /* Schedule AC LSA */
+          schedule_ac_lsa(oa);
+
+          rem_node(NODE ip);
+          mb_free(ip);
+          return;
+        }
+    }
+
+  OSPF_TRACE(D_EVENTS, "No old information for interface %s[0x%x]",
+             ifa->iface->name, (int)ifa->iface);
+}
+
 #endif /* OSPFv3 */
