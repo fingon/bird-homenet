@@ -891,7 +891,7 @@ ospf_pxassign_usp_ifa(struct ospf_iface *ifa, struct ospf_lsa_ac_tlv_v_usp *cusp
       pxu.len = rsvd.len;
       list empty_list;
       init_list(&empty_list);
-      switch(choose_prefix(&pxu, &px, empty_list))
+      switch(choose_prefix(&pxu, &px, empty_list, po->router_id, ifa))
       {
         case PXCHOOSE_SUCCESS:
           try_assign_specific(ifa, usp_addr, usp_len, &px.addr, &px.len, &pxchoose_success, &change, NULL);
@@ -1067,7 +1067,6 @@ try_assign_unused(struct ospf_iface *ifa, ip_addr usp_addr, unsigned int usp_len
       if(self_r_px)
       {
         // delete the reserved /64 prefix that is going to be replaced
-        configure_ifa_del_prefix(self_r_px->px.addr, self_r_px->px.len, ifa);
         OSPF_TRACE(D_EVENTS, "Interface %s: Replacing prefix %I/%d with prefix %I/%d from usable prefix %I/%d", ifa->iface->name, self_r_px->px.addr, self_r_px->px.len, px.addr, px.len, usp_addr, usp_len);
         configure_ifa_del_prefix(self_r_px, ifa);
       }
