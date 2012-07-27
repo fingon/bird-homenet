@@ -103,11 +103,15 @@ ridn(char *msg, ...)
   va_end(args);
 }
 
-u32 read_rid(void *f)
+u32 read_rid(const char *filename)
 {
   u32 ret = 0;
   char *pos;
   char buf[STD_RID_P_LENGTH + 1];
+  FILE *f = fopen(filename, "r");
+
+  if (!f)
+    return 0;
   if(fgets(buf, STD_RID_P_LENGTH + 1, f))
   {
     /* get rid of trailing newline */
@@ -117,20 +121,16 @@ u32 read_rid(void *f)
     if(!ipv4_pton_u32(buf, &ret))
       ret = 0;
   }
-  fseek(f, 0L, SEEK_SET);
+  fclose(f);
   return ret;
 }
 
-void write_rid(void *f, u32 rid)
+void write_rid(const char *filename, u32 rid)
 {
+  FILE *f = fopen(filename, "w");
+
   rid_reset();
   ridn("%R", rid);
   rid_commit(f);
-  int fd = fileno(f);
-  if(fd)
-  {
-    int a = ftell(f);
-    ftruncate(fd, a);
-    fseek(f, 0L, SEEK_SET);
-  }
+  fclose(f);
 }

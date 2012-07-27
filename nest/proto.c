@@ -384,24 +384,29 @@ int proto_reconfig_type;  /* Hack to propagate type info to pipe reconfigure hoo
 static void
 proto_set_rid(struct proto_config *oc, struct proto_config *nc)
 {
-  if(nc->router_id)
+  if(nc->router_id) {
+    log(L_INFO "Proto using router_id %R.", nc->router_id);
     return;
+  }
 
   if(nc->rid_is_random)
   {
-    if(oc && oc->rid_is_random)
+    if(oc && oc->rid_is_random && oc->router_id)
     {
       nc->router_id = oc->router_id;
+      log(L_INFO "Proto re-using old router_id %R.", nc->router_id);
       return;
     }
     do {
         nc->router_id = random_u32();
       } while (nc->router_id == 0);
+    log(L_INFO "Proto generated router_id %R.", nc->router_id);
     return;
   }
 
   nc->router_id = nc->global->router_id;
   nc->rid_is_random = nc->global->rid_is_random;
+  log(L_INFO "Proto inherited global router_id %R.", nc->router_id);
 }
 
 static int

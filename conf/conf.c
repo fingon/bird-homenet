@@ -185,11 +185,12 @@ global_set_rid(struct config *new, struct config *old)
      - there is no value stored in memory or we are set to not look at memory
      AND
      - this is a first time configuration or old config wasn't random */
-  if(new->rid_is_random && (!old || !old->rid_is_random))
+  if(new->rid_is_random && (!old || !old->router_id || !old->rid_is_random))
   {
     u32 rid;
-    if(new->rid_file && (rid = read_rid(new->rid_file)))
+    if(new->rid_filename && (rid = read_rid(new->rid_filename)))
     {
+      log(L_INFO "Read router id %R from file.", rid);
       new->router_id = rid;
     }
     else
@@ -197,14 +198,15 @@ global_set_rid(struct config *new, struct config *old)
       do {
         new->router_id = random_u32();
       } while (new->router_id == 0);
+      log(L_INFO "Randomly generated router id %R.", new->router_id);
     }
   }
 
   if (!new->router_id)
     new->router_id = old->router_id;
 
-  if(new->rid_file)
-    write_rid(new->rid_file, new->router_id);
+  if(new->rid_filename)
+    write_rid(new->rid_filename, new->router_id);
 }
 
 static int

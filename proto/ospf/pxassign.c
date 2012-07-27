@@ -1346,4 +1346,24 @@ ospf_pxassign_reconfigure_iface(struct ospf_iface *ifa)
     }
   }
 }
+
+void
+ospf_pxassign_remove_iface(struct ospf_iface *ifa)
+{
+#if 0
+  struct prefix_node *n;
+  struct ospf_area *oa = ifa->oa;
+  struct proto_ospf *po = oa->po;
+  struct proto *p = &po->proto;
+
+  /* This is probably correct thing to do. However, it does not work
+     too well in practise, as the link flaps AND interface address
+     add-removes cause whole ospf_iface's to be removed+readded. */
+  WALK_LIST_FIRST(n, ifa->asp_list)
+  {
+    OSPF_TRACE(D_EVENTS, "Interface %s: removing prefix %I/%d", ifa->iface->name, n->px.addr, n->px.len);
+    configure_ifa_del_prefix(n, ifa);
+  }
+#endif /* 0 */
+}
 #endif /* OSPFv3 */

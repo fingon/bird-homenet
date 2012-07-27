@@ -26,6 +26,7 @@ void * find_next_tlv(void *lsa, int *offset, unsigned int size, u8 type);
 int update_dhcpv6_usable_prefix(struct proto_ospf *po);
 //u8 ospf_get_pa_priority(struct top_hash_entry *en, u32 id);
 void ospf_pxassign_reconfigure_iface(struct ospf_iface *ifa);
+void ospf_pxassign_remove_iface(struct ospf_iface *ifa);
 
 #define PARSE_LSA_AC_IASP_START(iasp,en)                                                  \
 if((en = ospf_hash_find_ac_lsa_first(po->gr, oa->areaid)) != NULL)                        \

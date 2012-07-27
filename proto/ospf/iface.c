@@ -237,6 +237,10 @@ ospf_iface_remove(struct ospf_iface *ifa)
     OSPF_TRACE(D_EVENTS, "Removing vlink to %R via area %R", ifa->vid, ifa->voa->areaid);
 
   ospf_iface_sm(ifa, ISM_DOWN);
+
+  /* Remove allocated prefixes, if any. */
+  ospf_pxassign_remove_iface(ifa);
+
   rem_node(NODE ifa);
   rfree(ifa->pool);
 }
