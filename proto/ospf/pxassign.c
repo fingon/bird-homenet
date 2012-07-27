@@ -27,8 +27,6 @@ static void random_prefix(struct prefix *px, struct prefix *pxsub);
 static int in_use(struct prefix *px, list used);
 static void next_prefix(struct prefix *pxa, struct prefix *pxb);
 static int choose_prefix(struct prefix *pxu, struct prefix *px, list used);
-static int configure_ifa_add_prefix(ip_addr addr, unsigned int len, struct ospf_iface *ifa);
-static int configure_ifa_del_prefix(ip_addr addr, unsigned int len, struct ospf_iface *ifa);
 static void find_used(struct ospf_iface *ifa, ip_addr usp_addr, unsigned int usp_len, list *used, ip_addr *steal_addr, unsigned int *steal_len,
                       unsigned int *found_steal, ip_addr *split_addr, unsigned int *split_len, unsigned int *found_split, u8 *lowest_pa_priority,
                       struct prefix_node *self_r_px);
@@ -43,33 +41,56 @@ static void try_split(struct ospf_iface *ifa, ip_addr usp_addr, unsigned int usp
                       unsigned int *found_split, unsigned int *pxchoose_success, unsigned int *change, unsigned int length);
 
 static int
-configure_ifa_add_prefix(ip_addr addr, unsigned int len, struct ospf_iface *ifa)
+configure_ifa_add_prefix(ip_addr addr, unsigned int len,
+                         u32 rid,
+                         int pa_priority,
+                         struct ospf_iface *ifa)
 {
+  struct prefix_node *pxn;
+  char cmd[128];
+  char ip6addr[40];
+
+  /* Add the prefix to the interface */
+  pxn = mb_alloc(ifa->pool, sizeof(struct prefix_node));
+  pxn->px.addr = addr;
+  pxn->px.len = len;
+  pxn->rid = rid;
+  pxn->pa_priority = pa_priority;
+  pxn->valid = 1;
+  add_tail(&ifa->asp_list, NODE pxn);
+
+  /* And then configure it to the system */
   // FIXME need a better way to do this.
   // FIXME #2 BIRD seems to create a new ospf_iface struct when addresses change on an interface.
   // Maybe the interfaces' asp_list should be placed elsewhere than in the ospf_iface struct.
   // FIXME #3 This should probably be in a sysdep file.
-  /*char cmd[128];
-  char ip6addr[40];
   ip_ntop(addr, ip6addr);
   snprintf(cmd, sizeof(cmd), "ip -6 addr add %s/%d dev %s", ip6addr, len, ifa->iface->name);
-  return system(cmd);*/
-  return -1;
+  return system(cmd);
 }
 
 static int
-configure_ifa_del_prefix(ip_addr addr, unsigned int len, struct ospf_iface *ifa)
+configure_ifa_del_prefix(struct prefix_node *pxn, struct ospf_iface *ifa)
 {
+  char cmd[128];
+  char ip6addr[40];
+  int rv;
+
+  /* Remove the prefix from the system */
   // FIXME need a better way to do this.
   // FIXME #2 BIRD seems to create a new ospf_iface struct when addresses change on an interface.
   // Maybe the interfaces' asp_list should be placed elsewhere than in the ospf_iface struct.
   // FIXME #3 This should probably be in a sysdep file.
-  /*char cmd[128];
-  char ip6addr[40];
-  ip_ntop(addr, ip6addr);
-  snprintf(cmd, sizeof(cmd), "ip -6 addr del %s/%d dev %s", ip6addr, len, ifa->iface->name);
-  return system(cmd);*/
-  return -1;
+  ip_ntop(pxn->px.addr, ip6addr);
+  snprintf(cmd, sizeof(cmd), "ip -6 addr del %s/%d dev %s", ip6addr, pxn->px.len, ifa->iface->name);
+  rv = system(cmd);
+
+  /* And from the internal datastructure */
+  rem_node(NODE pxn);
+  mb_free(pxn);
+
+
+  return rv;
 }
 
 /**
@@ -399,11 +420,9 @@ ospf_pxassign_area(struct ospf_area *oa)
       {
         if(!asp->valid)
         {
-          configure_ifa_del_prefix(asp->px.addr, asp->px.len, ifa);
           if(asp->rid == po->router_id)
             change = 1;
-          rem_node(NODE asp);
-          mb_free(asp);
+          configure_ifa_del_prefix(asp, ifa);
         }
       }
     }
@@ -591,9 +610,7 @@ ospf_pxassign_usp_ifa(struct ospf_iface *ifa, struct ospf_lsa_ac_tlv_v_usp *cusp
                                                           || net_in_net(self_r_px->px.addr, self_r_px->px.len, addr, len))))
           {
             OSPF_TRACE(D_EVENTS, "Interface %s: assignment %I/%d collides with %I/%d, removing", ifa->iface->name, self_r_px->px.addr, self_r_px->px.len, addr, len);
-            configure_ifa_del_prefix(self_r_px->px.addr, self_r_px->px.len, ifa);
-            rem_node(NODE self_r_px);
-            mb_free(self_r_px);
+            configure_ifa_del_prefix(self_r_px, ifa);
             deassigned_prefix = 1;
             change = 1;
             break;
@@ -767,11 +784,9 @@ ospf_pxassign_usp_ifa(struct ospf_iface *ifa, struct ospf_lsa_ac_tlv_v_usp *cusp
             {
               OSPF_TRACE(D_EVENTS, "Interface %s: To add %R's assignment %I/%d with priority %d, must delete interface %s assignment %I/%d with priority %d",
                                    ifa->iface->name, neigh_rid, neigh_r_addr, neigh_r_len, highest_link_pa_priority, ifa2->iface->name, n->px.addr, n->px.len, n->pa_priority);
-              configure_ifa_del_prefix(n->px.addr, n->px.len, ifa2);
               if(n->rid == po->router_id)
                 change = 1;
-              rem_node(NODE n);
-              mb_free(n);
+              configure_ifa_del_prefix(n, ifa2);
             }
           }
         }
@@ -781,14 +796,7 @@ ospf_pxassign_usp_ifa(struct ospf_iface *ifa, struct ospf_lsa_ac_tlv_v_usp *cusp
     if(!found && !refused)
     {
       OSPF_TRACE(D_EVENTS, "Interface %s: Adding %R's assignment %I/%d with priority %d", ifa->iface->name, neigh_rid, neigh_r_addr, neigh_r_len, highest_link_pa_priority);
-      pxn = mb_alloc(ifa->pool, sizeof(struct prefix_node));
-      pxn->px.addr = neigh_r_addr;
-      pxn->px.len = neigh_r_len;
-      pxn->rid = neigh_rid;
-      pxn->pa_priority = highest_link_pa_priority;
-      pxn->valid = 1;
-      add_tail(&ifa->asp_list, NODE pxn);
-      configure_ifa_add_prefix(pxn->px.addr, pxn->px.len, ifa);
+      configure_ifa_add_prefix(neigh_r_addr, neigh_r_len, neigh_rid, highest_link_pa_priority, ifa);
     }
   }
 
@@ -994,7 +1002,6 @@ try_assign_unused(struct ospf_iface *ifa, ip_addr usp_addr, unsigned int usp_len
 {
   struct proto_ospf *po = ifa->oa->po;
   struct proto *p = &po->proto;
-  struct prefix_node *pxn;
 
   struct prefix px_tmp, pxu_tmp;
   px_tmp.addr = IPA_NONE;
@@ -1007,25 +1014,15 @@ try_assign_unused(struct ospf_iface *ifa, ip_addr usp_addr, unsigned int usp_len
       if(self_r_px)
       {
         // delete the old /80 that is going to be replaced
-        configure_ifa_del_prefix(self_r_px->px.addr, self_r_px->px.len, ifa);
         OSPF_TRACE(D_EVENTS, "Interface %s: Replacing prefix %I/%d with prefix %I/%d from usable prefix %I/%d", ifa->iface->name, self_r_px->px.addr, self_r_px->px.len, px_tmp.addr, px_tmp.len, usp_addr, usp_len);
-        rem_node(NODE self_r_px);
-        mb_free(self_r_px);
+        configure_ifa_del_prefix(self_r_px, ifa);
       }
       else {
         OSPF_TRACE(D_EVENTS, "Interface %s: Chose prefix %I/%d to assign from usable prefix %I/%d", ifa->iface->name, px_tmp.addr, px_tmp.len, usp_addr, usp_len);
       }
-      //FIXME do prefix assignment!
-      pxn = mb_alloc(ifa->pool, sizeof(struct prefix_node));
-      add_tail(&ifa->asp_list, NODE pxn);
-      pxn->px.addr = px_tmp.addr;
-      pxn->px.len = px_tmp.len;
-      pxn->rid = po->router_id;
-      pxn->pa_priority = ifa->pa_priority;
-      pxn->valid = 1;
       *change = 1;
       *pxchoose_success = 1;
-      configure_ifa_add_prefix(pxn->px.addr, pxn->px.len, ifa);
+      configure_ifa_add_prefix(px_tmp.addr, px_tmp.len, po->router_id, ifa->pa_priority, ifa);
       break;
 
     case PXCHOOSE_FAILURE:
@@ -1121,11 +1118,9 @@ try_steal(struct ospf_iface *ifa, ip_addr usp_addr, unsigned int usp_len, ip_add
                      || n->rid != po->router_id)))
           {
             OSPF_TRACE(D_EVENTS, "Interface %s: stealing assignment %I/%d, must remove %I/%d from interface %s", ifa->iface->name, *steal_addr, *steal_len, n->px.addr, n->px.len, ifa2->iface->name);
-            configure_ifa_del_prefix(n->px.addr, n->px.len, ifa2);
-            rem_node(NODE n);
-            mb_free(n);
             if(n->rid == po->router_id)
               *change = 1;
+            configure_ifa_del_prefix(n, ifa2);
           }
         }
       }
@@ -1135,23 +1130,14 @@ try_steal(struct ospf_iface *ifa, ip_addr usp_addr, unsigned int usp_len, ip_add
     if(self_r_px)
     {
       OSPF_TRACE(D_EVENTS, "Interface %s: Replacing prefix %I/%d with stolen prefix %I/%d from usable prefix %I/%d", ifa->iface->name, self_r_px->px.addr, self_r_px->px.len, *steal_addr, *steal_len, usp_addr, usp_len);
-      configure_ifa_del_prefix(self_r_px->px.addr, self_r_px->px.len, ifa);
-      rem_node(NODE self_r_px);
-      mb_free(self_r_px);
+      configure_ifa_del_prefix(self_r_px, ifa);
     }
     else {
       OSPF_TRACE(D_EVENTS, "Interface %s: stole prefix %I/%d to assign from usable prefix %I/%d", ifa->iface->name, *steal_addr, *steal_len, usp_addr, usp_len);
     }
-    pxn = mb_alloc(ifa->pool, sizeof(struct prefix_node));
-    add_tail(&ifa->asp_list, NODE pxn);
-    pxn->px.addr = *steal_addr;
-    pxn->px.len = *steal_len;
-    pxn->rid = po->router_id;
-    pxn->pa_priority = ifa->pa_priority;
-    pxn->valid = 1;
     *change = 1;
     *pxchoose_success = 1;
-    configure_ifa_add_prefix(pxn->px.addr, pxn->px.len, ifa);
+    configure_ifa_add_prefix(*steal_addr, *steal_len, po->router_id, ifa->pa_priority, ifa);
   }
 }
 
@@ -1238,11 +1224,9 @@ try_split(struct ospf_iface *ifa, ip_addr usp_addr, unsigned int usp_len, ip_add
              || net_in_net(*split_addr, *split_len, n->px.addr, n->px.len))
           {
             OSPF_TRACE(D_EVENTS, "Interface %s: splitting assignment %I/%d, must remove %I/%d from interface %s", ifa->iface->name, *split_addr, *split_len, n->px.addr, n->px.len, ifa2->iface->name);
-            configure_ifa_del_prefix(n->px.addr, n->px.len, ifa2);
-            rem_node(NODE n);
-            mb_free(n);
             if(n->rid == po->router_id)
               *change = 1;
+            configure_ifa_del_prefix(n, ifa2);
           }
         }
       }
@@ -1259,18 +1243,10 @@ try_split(struct ospf_iface *ifa, ip_addr usp_addr, unsigned int usp_len, ip_add
     switch(choose_prefix(&pxu_tmp, &px_tmp, empty_list))
     {
       case PXCHOOSE_SUCCESS:
-        //FIXME do prefix assignment!
-        pxn = mb_alloc(ifa->pool, sizeof(struct prefix_node));
-        add_tail(&ifa->asp_list, NODE pxn);
-        pxn->px.addr = px_tmp.addr;
-        pxn->px.len = px_tmp.len;
-        pxn->rid = po->router_id;
-        pxn->pa_priority = ifa->pa_priority;
-        pxn->valid = 1;
         OSPF_TRACE(D_EVENTS, "Interface %s: split prefix %I/%d to assign from usable prefix %I/%d", ifa->iface->name, px_tmp.addr, px_tmp.len, usp_addr, usp_len);
         *change = 1;
         *pxchoose_success = 1;
-        configure_ifa_add_prefix(pxn->px.addr, pxn->px.len, ifa);
+        configure_ifa_add_prefix(pxu_tmp.addr, pxu_tmp.len, po->router_id, ifa->pa_priority, ifa);
         break;
       case PXCHOOSE_FAILURE: //impossible
         die("bug in prefix assignment algorithm");
