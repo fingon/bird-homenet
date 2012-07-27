@@ -28,7 +28,7 @@ int update_dhcpv6_usable_prefix(struct proto_ospf *po);
 void ospf_pxassign_reconfigure_iface(struct ospf_iface *ifa);
 void ospf_pxassign_remove_iface(struct ospf_iface *ifa);
 
-#define PARSE_LSA_AC_IASP_START(iasp,en)                                                  \
+#define PARSE_LSA_AC_IFAP_START(ifap,en)                                                  \
 if((en = ospf_hash_find_ac_lsa_first(po->gr, oa->areaid)) != NULL)                        \
 {                                                                                         \
   do {                                                                                    \
@@ -38,14 +38,14 @@ if((en = ospf_hash_find_ac_lsa_first(po->gr, oa->areaid)) != NULL)              
       unsigned int size = en->lsa.length - sizeof(struct ospf_lsa_header);                \
       unsigned int offset = 0;                                                            \
                                                                                           \
-      while((tlv = find_next_tlv(en->lsa_body, &offset, size, LSA_AC_TLV_T_IASP)) != NULL)\
+      while((tlv = find_next_tlv(en->lsa_body, &offset, size, LSA_AC_TLV_T_IFAP)) != NULL)\
       {                                                                                   \
-        iasp = (struct ospf_lsa_ac_tlv_v_iasp *)(tlv->value);
+        ifap = (struct ospf_lsa_ac_tlv_v_ifap *)(tlv->value);
 
-#define PARSE_LSA_AC_IASP_END(en) } } } while((en = ospf_hash_find_ac_lsa_next(en)) != NULL); }
-#define PARSE_LSA_AC_IASP_BREAKIF(x,en) if(x) break; } if(x) break; } } while((en = ospf_hash_find_ac_lsa_next(en)) != NULL); }
+#define PARSE_LSA_AC_IFAP_END(en) } } } while((en = ospf_hash_find_ac_lsa_next(en)) != NULL); }
+#define PARSE_LSA_AC_IFAP_BREAKIF(x,en) if(x) break; } if(x) break; } } while((en = ospf_hash_find_ac_lsa_next(en)) != NULL); }
 
-#define PARSE_LSA_AC_IASP_ROUTER_START(rid,iasp,en)                                       \
+#define PARSE_LSA_AC_IFAP_ROUTER_START(rid,ifap,en)                                       \
 if((en = ospf_hash_find_router_ac_lsa_first(po->gr, oa->areaid, rid)) != NULL)            \
 {                                                                                         \
   do {                                                                                    \
@@ -54,18 +54,18 @@ if((en = ospf_hash_find_router_ac_lsa_first(po->gr, oa->areaid, rid)) != NULL)  
       struct ospf_lsa_ac *tlv;                                                            \
       unsigned int size = en->lsa.length - sizeof(struct ospf_lsa_header);                \
       unsigned int offset = 0;                                                            \
-      while((tlv = find_next_tlv(en->lsa_body, &offset, size, LSA_AC_TLV_T_IASP)) != NULL)\
+      while((tlv = find_next_tlv(en->lsa_body, &offset, size, LSA_AC_TLV_T_IFAP)) != NULL)\
       {                                                                                   \
-        iasp = (struct ospf_lsa_ac_tlv_v_iasp *)(tlv->value);
+        ifap = (struct ospf_lsa_ac_tlv_v_ifap *)(tlv->value);
 
-#define PARSE_LSA_AC_IASP_ROUTER_END(en) } } } while((en = ospf_hash_find_router_ac_lsa_next(en)) != NULL); }
-#define PARSE_LSA_AC_IASP_ROUTER_BREAKIF(x,en) if(x) break; } if(x) break; } } while((en = ospf_hash_find_router_ac_lsa_next(en)) != NULL); }
+#define PARSE_LSA_AC_IFAP_ROUTER_END(en) } } } while((en = ospf_hash_find_router_ac_lsa_next(en)) != NULL); }
+#define PARSE_LSA_AC_IFAP_ROUTER_BREAKIF(x,en) if(x) break; } if(x) break; } } while((en = ospf_hash_find_router_ac_lsa_next(en)) != NULL); }
 
-#define PARSE_LSA_AC_ASP_START(asp,iasp)                                                \
+#define PARSE_LSA_AC_ASP_START(asp,ifap)                                                \
 {                                                                                       \
   struct ospf_lsa_ac *tlv2;                                                             \
-  unsigned int offset2 = LSA_AC_IASP_OFFSET;                                            \
-  while((tlv2 = find_next_tlv(iasp, &offset2, tlv->length, LSA_AC_TLV_T_ASP)) != NULL)  \
+  unsigned int offset2 = LSA_AC_IFAP_OFFSET;                                            \
+  while((tlv2 = find_next_tlv(ifap, &offset2, tlv->length, LSA_AC_TLV_T_ASP)) != NULL)  \
   {                                                                                     \
     asp = (struct ospf_lsa_ac_tlv_v_asp *) tlv2->value;
 
